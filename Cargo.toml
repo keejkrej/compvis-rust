@@ -1,5 +1,5 @@
 [package]
-name = "opencv_otsu_threshold"
+name = "otsu"
 version = "0.1.0"
 edition = "2021"
 authors = ["Your Name <you@example.com>"]
@@ -7,7 +7,8 @@ description = "A backend service for image processing using Otsu thresholding"
 license = "MIT"
 
 [dependencies]
-opencv = "0.95.0"
+image = "0.24"
+imageproc = "0.23"
 axum = { version = "0.7", features = ["multipart"] }
 tokio = { version = "1.0", features = ["full"] }
 serde = { version = "1.0", features = ["derive"] }

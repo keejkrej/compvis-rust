@@ -5,7 +5,7 @@ use axum::{
     routing::{get, post},
     Router,
 };
-use opencv::{core, imgcodecs, imgproc, prelude::*, Result};
+use imageproc::contrast::{otsu_level, threshold};
 use serde::Serialize;
 use std::io::Write;
 use tempfile::NamedTempFile;
@@ -142,18 +142,35 @@ async fn process_image(mut multipart: Multipart) -> Result<Json<ProcessingRespon
         ".jpg"
     };
     
+    // Create a new temporary file with proper extension for input
+    let mut input_path = env::temp_dir();
+    input_path.push(format!("input_{}{}", Uuid::new_v4(), output_extension));
+    
+    // Copy the uploaded file to the new location with proper extension
+    std::fs::copy(temp_input.path(), &input_path)
+        .map_err(|e| {
+            eprintln!("Failed to copy file: {}", e);
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    success: false,
+                    error: "Failed to prepare image file".to_string(),
+                }),
+            )
+        })?;
+    
     let mut output_path = env::temp_dir();
     output_path.push(format!("processed_{}{}", Uuid::new_v4(), output_extension));
     
-    let input_path = temp_input.path().to_str().unwrap();
+    let input_path_str = input_path.to_str().unwrap();
     let output_path_str = output_path.to_str().unwrap();
     
-    println!("Processing image from {} to {}", input_path, output_path_str);
+    println!("Processing image from {} to {}", input_path.display(), output_path_str);
 
-    // Process image with OpenCV
-    let threshold_value = process_image_opencv(input_path, output_path_str)
+    // Process image with cv crate
+    let threshold_value = process_image_cv(input_path_str, output_path_str)
         .map_err(|e| {
-            eprintln!("OpenCV error: {}", e);
+            eprintln!("CV error: {}", e);
             (
                 StatusCode::INTERNAL_SERVER_ERROR,
                 Json(ErrorResponse {
@@ -192,42 +209,30 @@ async fn process_image(mut multipart: Multipart) -> Result<Json<ProcessingRespon
     }))
 }
 
-fn process_image_opencv(input_path: &str, output_path: &str) -> Result<f64> {
+fn process_image_cv(input_path: &str, output_path: &str) -> Result<f64, Box<dyn std::error::Error>> {
     println!("Reading image from: {}", input_path);
     
-    // Read image in grayscale
-    let img = imgcodecs::imread(input_path, imgcodecs::IMREAD_GRAYSCALE)?;
+    // Read image using image crate and convert to grayscale
+    let img = image::open(input_path)?;
+    let gray_img = img.to_luma8();
     
-    if img.empty() {
-        println!("Image is empty after reading");
-        return Err(opencv::Error::new(
-            opencv::core::StsError,
-            "Failed to load image",
-        ));
-    }
+    println!("Image loaded successfully, size: {}x{}", gray_img.width(), gray_img.height());
 
-    println!("Image loaded successfully, size: {}x{}", img.cols(), img.rows());
+    // Calculate the Otsu threshold value using imageproc
+    let threshold_val = otsu_level(&gray_img);
+    println!("Threshold applied: {}", threshold_val);
 
-    // Prepare output matrix
-    let mut dst = core::Mat::default();
+    // Apply the threshold to binarize the image
+    let binary_img = threshold(&gray_img, threshold_val);
 
-    // Apply Otsu thresholding
-    let thresh_val = imgproc::threshold(
-        &img,
-        &mut dst,
-        0.0,
-        255.0,
-        imgproc::THRESH_BINARY | imgproc::THRESH_OTSU,
-    )?;
-
-    println!("Threshold applied: {}", thresh_val);
-
-    // Save processed image
-    imgcodecs::imwrite(output_path, &dst, &core::Vector::new())?;
+    // Save the binarized image
+    binary_img.save(output_path)?;
     println!("Processed image saved to: {}", output_path);
 
-    Ok(thresh_val)
+    Ok(threshold_val as f64)
 }
+
+
 
 #[tokio::main]
 async fn main() {
